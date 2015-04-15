@@ -1,0 +1,11 @@
+[package]
+
+name = "memory"
+version = "0.0.1"
+authors = [ "Robert Fink <rfink@palantir.com>" ]
+
+[[bin]]
+name = "memory"
+
+[dependencies]
+getopts = "0.2.9"

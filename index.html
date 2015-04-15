@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <title>Very brief introduction to &quot;ownership&quot; in programming languages</title>
+
+    
+    <link rel="stylesheet" href="rust.css">
+<link rel="stylesheet" href="sliderust.css">
+<script src="sliderust.js"></script>
+
+
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+    <h1 class="title">Very brief introduction to &quot;ownership&quot; in programming languages</h1>
+    <p>Sydney Rust Meetup, April 2015, Robert Fink</p>
+
+<h1 id="ownership" class='section-header'><a
+                           href="#ownership">Ownership</a></h1>
+<blockquote>
+<p>&quot;At its core, ownership is about resources.&quot;</p>
+</blockquote>
+
+<hr class="pause" />
+
+<blockquote>
+<p>&quot;Rust has a focus on safety and speed. [...] Ownership is how Rust achieves its largest goal, memory safety.&quot;</p>
+</blockquote>
+
+<hr class="pause" />
+
+<blockquote>
+<p>&quot;Rust&#39;s secret weapon is ownership&quot;</p>
+</blockquote>
+
+<hr class="pause" />
+
+<blockquote>
+<p>&quot;This is one of Rust&#39;s most unique and compelling features [...]&quot;</p>
+</blockquote>
+
+<hr class="pause" />
+
+<blockquote>
+<p>&quot;Historically, systems programming languages require you to track these allocations, deallocations, and handles
+yourself.&quot;</p>
+</blockquote>
+
+<hr class="pause" />
+
+<blockquote>
+<p>&quot;Uh oh!&quot;</p>
+</blockquote>
+
+<div class="attribution"><a href="http://doc.rust-lang.org/1.0.0-beta/book/ownership.html">Rust Book</a></div>
+
+<div class="attribution"><a href="http://blog.rust-lang.org/2015/04/10/Fearless-Concurrency.html">Rust Blog: Fearless Concurrency</a></div>
+
+<h1 id="upsides-of-getting-ownership-right" class='section-header'><a
+                           href="#upsides-of-getting-ownership-right">Upsides of getting ownership right</a></h1>
+<ul>
+<li><strong>Code quality</strong></li>
+<li>Correctness</li>
+<li>Stability and determinism</li>
+<li>Speed</li>
+</ul>
+
+<h1 id="code-quality" class='section-header'><a
+                           href="#code-quality">Code quality</a></h1>
+<blockquote>
+<p>Claim: In the long run, lacking awareness of ownership gives rise to both buggy and unmaintainable code.</p>
+</blockquote>
+
+<hr class="pause" />
+
+<p>Proof by example...</p>
+
+<hr class="pause" />
+
+<h2 id="background:-ownership-in-java-and-c++" class='section-header'><a
+                           href="#background:-ownership-in-java-and-c++">Background: Ownership in Java and C++</a></h2>
+<ul>
+<li>(Originally, ) neither Java nor C++ have a language feature that supports ownership</li>
+<li>[As of C++11, std::shared_ptr, std::unique_ptr and friends]</li>
+<li>[In C++: const modifier gives rise to immutable borrowing]</li>
+<li>&quot;Everyone owns everything&quot; or &quot;Nobody owns anything&quot;</li>
+<li>Use comments to indicate ownership</li>
+</ul>
+
+<h1 id="example:-a-java-database-backend" class='section-header'><a
+                           href="#example:-a-java-database-backend">Example: A Java database backend</a></h1>
+<pre><code class="language-java">class DatabaseBackend implements AutoCloseable {
+  private final Connection db;
+
+  public DatabaseBackend(Connection db) {
+    this.db = db;
+  }
+
+  public void write(Object o) {
+    db.store(o);
+  }
+
+  @Override
+  public close() {
+    db.shutdown();
+  }
+}
+</code></pre>
+
+<hr class="pause" />
+
+<pre><code class="language-java">// Novice programmer Alex leaks a DB connection.
+Connection db = createConnection();
+DatabaseBackend backend = new DatabaseBackend(db);
+backend.write(something);
+</code></pre>
+
+<hr class="pause" />
+
+<pre><code class="language-java">// Shannon closes the db connection but not the backend.
+Connection db = createConnection();
+DatabaseBackend backend = new DatabaseBackend(db);
+backend.write(something);
+db.shutdown();
+</code></pre>
+
+<hr class="pause" />
+
+<pre><code class="language-java">// Peter closes the backend.
+Connection db = createConnection();
+DatabaseBackend backend = new DatabaseBackend(db);
+backend.write(something);
+backend.close(); // also closes db.
+</code></pre>
+
+<hr class="pause" />
+
+<pre><code class="language-java">// Java7 guru Andy has heard of try-with-resources.
+Connection db = createConnection();
+try (DatabaseBackend  backend = new DatabaseBackend(db)) {
+  backend.write(something);
+}
+db.close();
+</code></pre>
+
+<h1 id="example:-a-java-database-backend-1" class='section-header'><a
+                           href="#example:-a-java-database-backend-1">Example: A Java database backend</a></h1>
+<p>Now assume the library author improves error handling.</p>
+
+<pre><code class="language-java">class DatabaseBackend implements AutoCloseable {
+  private final Connection db;
+
+  public DatabaseBackend(Connection db) {
+    this.db = db;
+  }
+
+  public void write(Object o) {
+    db.write(o);
+  }
+
+  @Override
+  public close() {
+    if (db.isShutdown()) {
+      throw new IOException(&quot;DB already closed&quot;);
+    }
+    db.shutdown();
+  }
+}
+</code></pre>
+
+<hr class="pause" />
+
+<pre><code class="language-java">// This change breaks Andy&#39;s code.
+Connection db = createConnection();
+try (DatabaseBackend  backend = new DatabaseBackend(db)) {
+  backend.write(something);
+}
+db.close(); // throws
+</code></pre>
+
+<hr class="pause" />
+
+<h2 id="andy&#39;s-work-around:-ioutils.closequietly()" class='section-header'><a
+                           href="#andy&#39;s-work-around:-ioutils.closequietly()">Andy&#39;s work-around: IoUtils.closeQuietly()</a></h2>
+<pre><code class="language-java">public static void closeQuietly(Closeable closeable) {
+  try {
+    if (closeable != null) {
+      closeable.close();
+    }
+  } catch (IOException ioe) {
+    // ignore
+  }
+}
+</code></pre>
+
+<hr class="pause" />
+
+<pre><code class="language-java">Connection db = createConnection();
+try (DatabaseBackend  backend = new DatabaseBackend(db)) {
+  backend.write(something);
+}
+IoUtils.closeQuietly(db);
+</code></pre>
+
+<hr class="pause" />
+
+<h2 id="problems-with-this-work-around" class='section-header'><a
+                           href="#problems-with-this-work-around">Problems with this work-around</a></h2>
+<ul>
+<li>Ownership remains unclear</li>
+<li>Impossible to understand who owns what</li>
+<li>Impossible to understand which code is dead/important/redundant</li>
+</ul>
+
+<h1 id="&quot;solution&quot;:-clarify-ownership-in-comments." class='section-header'><a
+                           href="#&quot;solution&quot;:-clarify-ownership-in-comments.">&quot;Solution&quot;: Clarify ownership in comments.</a></h1>
+<pre><code class="language-java">class DatabaseBackend implements AutoCloseable {
+  private final Connection db; // owned
+
+  /** Creates new backend, takes ownership of db which
+    * should never be closed by a caller.
+    */
+  public DatabaseBackend(Connection db) {
+    this.db = db;
+  }
+
+  @Override
+  public close() {
+    db.shutdown();
+  }
+}
+</code></pre>
+
+<hr class="pause" />
+
+<h2 id="example:-appendablewriter-from-google&#39;s-guava" class='section-header'><a
+                           href="#example:-appendablewriter-from-google&#39;s-guava">Example: AppendableWriter from Google&#39;s Guava</a></h2>
+<pre><code class="language-txt">/**
+ * Writer that places all output on an {@link Appendable}
+ * target. If the target is {@link Flushable} or
+ * {@link Closeable}, flush()es and close()s will also
+ * be delegated to the target.
+ */
+class AppendableWriter { ... }
+</code></pre>
+
+<h1 id="upsides-of-getting-ownership-right-1" class='section-header'><a
+                           href="#upsides-of-getting-ownership-right-1">Upsides of getting ownership right</a></h1>
+<ul>
+<li>Code quality</li>
+<li><strong>Correctness</strong></li>
+<li>Stability and determinism</li>
+<li>Speed</li>
+</ul>
+
+<h1 id="example:-a-simple-web-server" class='section-header'><a
+                           href="#example:-a-simple-web-server">Example: A simple Web server</a></h1>
+<ul>
+<li>Multithreaded</li>
+<li>Standard consumer/producer pattern: ConnectionHandler accepts network connections, RequestHandler instances do the actual work.</li>
+</ul>
+
+<pre><code class="language-txt">class ConnectionHandler {
+  private AsyncQueue&lt;Request&gt; requests;
+
+  void loop() {
+    while(true) {
+      Request request = waitForRequest();
+      requests.push(request);
+    }
+  }
+}
+
+class RequestHandler() {
+  private AsyncQueue&lt;Request&gt; requests;
+
+  void loop() {
+    while (true) {
+      Request request = requests.pop();
+      handle(request);
+    }
+  }
+}
+</code></pre>
+
+<h1 id="example:-a-buggy-web-server" class='section-header'><a
+                           href="#example:-a-buggy-web-server">Example: A buggy Web server</a></h1>
+<pre><code class="language-txt">class ConnectionHandler {
+  private AsyncQueue&lt;Request&gt; requests;
+
+  void loop() {
+    while(true) {
+      Request request = waitForRequest();
+      requests.push(request);
+      request.setHeader(&quot;DATE&quot;, DateTime.now());
+    }
+  }
+}
+
+class RequestHandler() {
+  private AsyncQueue&lt;Request&gt; requests;
+
+  void loop() {
+    while (true) {
+      Request request = requests.pop();
+      handle(request);
+    }
+  }
+}
+</code></pre>
+
+<hr class="pause" />
+
+<h2 id="correctness-issues-when-ownership-is-unclear" class='section-header'><a
+                           href="#correctness-issues-when-ownership-is-unclear">Correctness issues when ownership is unclear</a></h2>
+<h3 id="problems" class='section-header'><a
+                           href="#problems">Problems</a></h3>
+<ul>
+<li>Unclear ownership gives rise to shared mutable state</li>
+<li>Shared mutable state is subject to race conditions and other $badThings</li>
+</ul>
+
+<h3 id="approaches" class='section-header'><a
+                           href="#approaches">Approaches</a></h3>
+<ul>
+<li>Mutual exclusion (comes with its own problems ... deadlocks, starvation, etc)</li>
+<li>Atomic operations</li>
+<li>Immutable objects</li>
+</ul>
+
+<h1 id="upsides-of-getting-ownership-right-2" class='section-header'><a
+                           href="#upsides-of-getting-ownership-right-2">Upsides of getting ownership right</a></h1>
+<ul>
+<li>Code quality</li>
+<li>Correctness</li>
+<li><strong>Stability and determinism</strong></li>
+<li><strong>Speed</strong></li>
+</ul>
+
+<h1 id="back-to-the-web-server" class='section-header'><a
+                           href="#back-to-the-web-server">Back to the Web server</a></h1>
+<pre><code class="language-java">class Request {
+  long num;
+  byte[] s;
+
+  public Request(long num) {
+    this.num = num;
+    this.s = new byte[1000000]; // expensive.
+  }
+}
+
+public class WebserverSimulator {
+  public static void main(String[] args) {
+    int numIterations = Integer.parseInt(args[0]);
+    int bufferSize = Integer.parseInt(args[1]);
+
+    LinkedList&lt;Request&gt; requests = new LinkedList&lt;&gt;();
+    // Fill buffer, simulate workload of concurrent requests.
+    for (int i = 0; i &lt; bufferSize; ++i) {
+      requests.push(new Request(i));
+    }
+
+    // For every new request, we handle one.
+    for (int i = 0; i &lt; numIterations; ++i) {
+      Request request = requests.remove();
+      requests.push(new Request(i));
+    }
+  }
+}
+</code></pre>
+
+<h1 id="c++-memory-usage" class='section-header'><a
+                           href="#c++-memory-usage">C++ memory usage</a></h1>
+<h2 id="with-leaks" class='section-header'><a
+                           href="#with-leaks">With leaks</a></h2>
+<pre><code class="language-c++">for (int i = 0; i &lt; numIterations; ++i) {
+  Request* request = requests.front();
+  requests.pop();
+  requests.push(createRequest(i));
+}
+</code></pre>
+
+<p><img src="img/c++-mem-with-leaks.png" alt="C++ memory - with leaks" title="C++ memory - with leaks"></p>
+
+<hr class="pause" />
+
+<h2 id="no-leaks" class='section-header'><a
+                           href="#no-leaks">No leaks</a></h2>
+<pre><code class="language-c++">for (int i = 0; i &lt; numIterations; ++i) {
+  Request* request = requests.front();
+  requests.pop();
+  delete request;
+  requests.push(createRequest(i));
+}
+</code></pre>
+
+<p><img src="img/c++-mem-no-leaks.png" alt="C++ memory - no leaks" title="C++ memory - no leaks"></p>
+
+<h1 id="rust-memory-usage" class='section-header'><a
+                           href="#rust-memory-usage">Rust memory usage</a></h1>
+<h2 id="with-leaks-1" class='section-header'><a
+                           href="#with-leaks-1">With leaks</a></h2>
+<p>Joking ...</p>
+
+<hr class="pause" />
+
+<h2 id="no-leaks-1" class='section-header'><a
+                           href="#no-leaks-1">No leaks</a></h2><pre id='rust-example-rendered' class='rust '>
+<span class='kw'>for</span> <span class='ident'>i</span> <span class='kw'>in</span> <span class='number'>0</span>..<span class='ident'>num_iterations</span> {
+  <span class='kw'>let</span> <span class='ident'>request</span> <span class='op'>=</span> <span class='ident'>requests</span>.<span class='ident'>pop_front</span>();
+  <span class='ident'>requests</span>.<span class='ident'>push_back</span>(<span class='ident'>Box</span>::<span class='ident'>new</span>(<span class='ident'>Request</span>::<span class='ident'>new</span>(<span class='ident'>i</span>)));
+}
+</pre>
+
+<p><img src="img/rust-mem-no-leaks.png" alt="Rust memory" title="Rust memory"></p>
+
+<h1 id="c++-execution-time" class='section-header'><a
+                           href="#c++-execution-time">C++ execution time</a></h1>
+<h2 id="with-leaks-2" class='section-header'><a
+                           href="#with-leaks-2">With leaks</a></h2>
+<p><img src="img/c++-time-with-leaks.png" alt="C++ execution time - with leaks" title="C++ execution time - with leaks"></p>
+
+<h2 id="no-leaks-2" class='section-header'><a
+                           href="#no-leaks-2">No leaks</a></h2>
+<p><img src="img/c++-time-no-leaks.png" alt="C++ execution time - no leaks" title="C++ execution time - no leaks"></p>
+
+<h1 id="rust-execution-time" class='section-header'><a
+                           href="#rust-execution-time">Rust execution time</a></h1>
+<h2 id="no-leaks-3" class='section-header'><a
+                           href="#no-leaks-3">No leaks</a></h2>
+<p><img src="img/rust-time-no-leaks.png" alt="Rust execution time - no leaks" title="Rust execution time - no leaks"></p>
+
+<h1 id="java-execution-time" class='section-header'><a
+                           href="#java-execution-time">Java execution time</a></h1>
+<h2 id="no-leaks,-with-garbage-collection" class='section-header'><a
+                           href="#no-leaks,-with-garbage-collection">No leaks, with Garbage Collection</a></h2>
+<pre><code class="language-java">for (int i = 0; i &lt; numIterations; ++i) {
+  Request request = requests.remove();
+  requests.push(new Request(i));
+}
+</code></pre>
+
+<hr class="pause" />
+
+<p><img src="img/java-time-no-leaks.png" alt="Java execution time - no leaks" title="Java execution time - no leaks"></p>
+
+<h1 id="speed,-stability,-determinism" class='section-header'><a
+                           href="#speed,-stability,-determinism">Speed, stability, determinism</a></h1>
+<h2 id="java:-no-ownership,-garbage-collector-cleans-up" class='section-header'><a
+                           href="#java:-no-ownership,-garbage-collector-cleans-up">Java: No ownership, garbage collector cleans up</a></h2>
+<ul>
+<li>Writing code is dead simple</li>
+<li>Sacrifice: unpredictable GC overhead</li>
+</ul>
+
+<h2 id="c++:-programmer-manages-ownership" class='section-header'><a
+                           href="#c++:-programmer-manages-ownership">C++: Programmer manages ownership</a></h2>
+<ul>
+<li>No static guarantees</li>
+<li>Run-time checks for resource de-allocation (e.g., valgrind)</li>
+<li>Really fast if you remember to clean up</li>
+<li>Else: bound to run out of memory eventually</li>
+</ul>
+
+<h2 id="rust:-compile-time-ownership" class='section-header'><a
+                           href="#rust:-compile-time-ownership">Rust: Compile time ownership</a></h2>
+<ul>
+<li>Compile-time guarantees on ownership and resource de-allocation</li>
+<li>Really fast. (You don&#39;t need to remember to clean up.)</li>
+<li>Sacrifice: Learning curve, syntax overhead, simple programs are more complicated (e.g., <a href="http://chrismorgan.info/blog/rust-fizzbuzz.html">FizzBuzz</a>)</li>
+</ul>
+
+<h1 id="upsides-of-getting-ownership-right-3" class='section-header'><a
+                           href="#upsides-of-getting-ownership-right-3">Upsides of getting ownership right</a></h1>
+<p>I hope I could convince that getting ownership right helps to address the following issues:</p>
+
+<ul>
+<li>Code quality</li>
+<li>Correctness</li>
+<li>Stability and determinism</li>
+<li>Speed</li>
+</ul>
+
+<h1 id="links" class='section-header'><a
+                           href="#links">Links</a></h1>
+<h2 id="ownership,-borrowing,-lifetimes-in-rust:" class='section-header'><a
+                           href="#ownership,-borrowing,-lifetimes-in-rust:">Ownership, borrowing, lifetimes in Rust:</a></h2>
+<ul>
+<li><a href="http://arthurtw.github.io/2014/11/30/rust-borrow-lifetimes.html">http://arthurtw.github.io/2014/11/30/rust-borrow-lifetimes.html</a></li>
+<li><a href="http://doc.rust-lang.org/1.0.0-beta/book/ownership.html">http://doc.rust-lang.org/1.0.0-beta/book/ownership.html</a></li>
+</ul>
+
+<h2 id="fizzbuzz-in-rust:" class='section-header'><a
+                           href="#fizzbuzz-in-rust:">FizzBuzz in Rust:</a></h2>
+<ul>
+<li><a href="http://chrismorgan.info/blog/rust-fizzbuzz.html">http://chrismorgan.info/blog/rust-fizzbuzz.html</a></li>
+</ul>
+
+<h2 id="experiments-(ipython-notebook):-<a-href="https://github.com/uschi2000/rust-meetup-ownership-2015/tree/gh-pages/exp">https://github.com/uschi2000/rust-meetup-ownership-2015/tree/gh-pages/exp</a>" class='section-header'><a
+                           href="#experiments-(ipython-notebook):-<a-href="https://github.com/uschi2000/rust-meetup-ownership-2015/tree/gh-pages/exp">https://github.com/uschi2000/rust-meetup-ownership-2015/tree/gh-pages/exp</a>">Experiments (iPython Notebook): <a href="https://github.com/uschi2000/rust-meetup-ownership-2015/tree/gh-pages/exp">https://github.com/uschi2000/rust-meetup-ownership-2015/tree/gh-pages/exp</a></a></h2>
+    <script type="text/javascript">
+        window.playgroundUrl = "";
+    </script>
+    
+</body>
+</html>
